@@ -84,7 +84,7 @@ function Chains(val::AbstractArray{A,3},
 
     # Ensure that we have a hashedsummary key in info.
     if !in(:hashedsummary, keys(info))
-        s = (hash(0), ChainSummaries("", []))
+        s = (hash(0), ChainDataFrame("", DataFrame()))
         info = merge(info, (hashedsummary = Ref(s),))
     end
 
@@ -105,9 +105,9 @@ function Chains(c::Chains{A, T, K, L}, section::Union{Vector, Any};
     # If we received an empty list, return the original chain.
     if isempty(section)
         if sorted
-            return sort(new_chn)
+            return sort(c)
         else
-            return new_chn
+            return c
         end
     end
 
@@ -314,7 +314,7 @@ function Base.show(io::IO, c::Chains)
         if s[1] == h
             show(io, s[2])
         else
-            new_summary = summarystats(c, suppress_header=true)
+            new_summary = summarystats(c)
             c.info.hashedsummary.x = (h, new_summary)
             show(io, new_summary)
         end
@@ -376,12 +376,32 @@ function chains(c::AbstractChains)
 end
 
 """
-    names(c::AbstractChains)
+    names(c::AbstractChains, sections)
 
 Return the parameter names in a `Chains` object.
 """
 function names(c::AbstractChains)
     return c.value[Axis{:var}].val
+end
+
+"""
+    names(c::AbstractChains, sections::Union{Symbol, Vector{Symbol}})
+
+Return the parameter names in a `Chains` object, given an array of sections.
+"""
+function names(c::AbstractChains,
+    sections::Union{Symbol, Vector{Symbol}})
+    # Check that sections is an array.
+    sections = typeof(sections) <: AbstractArray ?
+        sections :
+        [sections]
+
+    nms = []
+
+    for i in sections
+        push!(nms, c.name_map[i]...)
+    end
+    return nms
 end
 
 """
@@ -596,6 +616,11 @@ function _use_showall(c::AbstractChains, section::Symbol)
     return false
 end
 
+function _clean_sections(c::AbstractChains, sections::Vector{Symbol})
+    ks = collect(keys(c.name_map))
+    return ks ∩ sections
+end
+
 #################### Concatenation ####################
 
 function Base.cat(c1::AbstractChains, args::AbstractChains...; dims::Integer = 3)
@@ -672,3 +697,9 @@ end
 chainscat(c1::AbstractChains, args::AbstractChains...) = cat(c1, args..., dims=3)
 Base.hcat(c1::AbstractChains, args::AbstractChains...) = cat(c1, args..., dims=2)
 Base.vcat(c1::AbstractChains, args::AbstractChains...) = cat(c1, args..., dims=1)
+
+function pool_chain(c::Chains{A, T, K, L}) where {A, T, K, L}
+    val = c.value.data
+    concat = vcat([val[:,:,j] for j in 1:size(val,3)]...)
+    return Chains(cat(concat, dims=3), names(c), c.name_map; info=c.info)
+end
