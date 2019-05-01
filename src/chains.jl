@@ -84,7 +84,8 @@ function Chains(val::AbstractArray{A,3},
 
     # Ensure that we have a hashedsummary key in info.
     if !in(:hashedsummary, keys(info))
-        s = (hash(0), ChainDataFrame("", DataFrame()))
+        empty_df_vec = [ChainDataFrame("", DataFrame())]
+        s = (hash(0), empty_df_vec)
         info = merge(info, (hashedsummary = Ref(s),))
     end
 
@@ -314,21 +315,17 @@ function Base.show(io::IO, c::Chains)
         if s[1] == h
             show(io, s[2])
         else
-            new_summary = summarystats(c)
+            new_summary = describe(c)
             c.info.hashedsummary.x = (h, new_summary)
             show(io, new_summary)
         end
     else
-        show(io, summarystats(c, suppress_header=true))
+        show(io, describe(c, suppress_header=true))
     end
 end
 
-function Base.size(c::AbstractChains)
-  dim = size(c.value)
-  last(c), dim[2], dim[3]
-end
-
 Base.keys(c::AbstractChains) = names(c)
+Base.size(c::AbstractChains) = size(c.value)
 Base.size(c::AbstractChains, ind) = size(c)[ind]
 Base.length(c::AbstractChains) = length(range(c))
 Base.first(c::AbstractChains) = first(c.value[Axis{:iter}].val)
@@ -616,7 +613,8 @@ function _use_showall(c::AbstractChains, section::Symbol)
     return false
 end
 
-function _clean_sections(c::AbstractChains, sections::Vector{Symbol})
+function _clean_sections(c::AbstractChains, sections::Union{Vector{Symbol}, Symbol})
+    sections = sections isa AbstractArray ? sections : [sections]
     ks = collect(keys(c.name_map))
     return ks ∩ sections
 end
