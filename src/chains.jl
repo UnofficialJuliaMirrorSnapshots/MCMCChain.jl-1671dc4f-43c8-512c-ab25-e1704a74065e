@@ -281,7 +281,7 @@ function Base.get(c::Chains;
         throw(ArgumentError("$not_found not found in chains name map."))
     end
 
-    return get(c, Symbol.(names))
+    return get(c, Symbol.(names), flatten = flatten)
 end
 
 """
@@ -497,7 +497,7 @@ function indiscretesupport(c::AbstractChains,
 end
 
 function link(c::AbstractChains)
-  cc = copy(c.value)
+  cc = copy(c.value.data)
   for j in 1:length(c.names)
     x = cc[:, j, :]
     if minimum(x) > 0.0
