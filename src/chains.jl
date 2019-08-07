@@ -5,64 +5,61 @@
 # Default name map.
 const DEFAULT_MAP = Dict{Symbol, Vector{Any}}(:parameters => [])
 
-# Set default parameter names if not given.
-# function Chains(val::AbstractArray{A,3};
-#         start::Int=1,
-#         thin::Int=1,
-#         evidence = missing,
-#         info=NamedTuple()) where {A<:Union{Real, Union{Missing, Real}}}
-#
-#     return Chains(val, parameter_names, start=start, thin=thin)
-# end
-#
 # Constructor to handle a vector of vectors.
-function Chains(val::Vector{Vector{A}},
-				parameter_names::Vector{String} = map(i->"Param$i", 1:length(first(val))),
+function Chains(
+        val::Vector{Vector{A}},
+		parameter_names::Vector{String} = map(i->"Param$i", 1:length(first(val))),
         name_map = copy(DEFAULT_MAP);
         start::Int=1,
         thin::Int=1,
         evidence = missing,
-        info::NamedTuple=NamedTuple()
+        info::NamedTuple=NamedTuple(),
+        sorted::Bool=true
 ) where {A<:Union{Real, Union{Missing, Real}}}
-	println("It's working")
 	return Chains(Array(hcat(val...)'), parameter_names, name_map, start=start,
            thin=thin, evidence=evidence, info=info)
 end
 
 # Constructor to handle a 1D array.
-function Chains(val::AbstractArray{A,1},
+function Chains(
+        val::AbstractArray{A,1},
         parameter_names::Vector{String} = map(i->"Param$i", 1:size(val, 2)),
         name_map = copy(DEFAULT_MAP);
         start::Int=1,
         thin::Int=1,
         evidence = missing,
-        info::NamedTuple=NamedTuple()
+        info::NamedTuple=NamedTuple(),
+        sorted::Bool=true
 ) where {A<:Union{Real, Union{Missing, Real}}}
 	return Chains(val[:,:,:], parameter_names, name_map, start=start,
-           thin=thin, evidence=evidence, info=info)
+           thin=thin, evidence=evidence, info=info, sorted=sorted)
 end
 
 # Set default parameter names if not given.
-function Chains(val::AbstractArray{A,2},
+function Chains(
+        val::AbstractArray{A,2},
         parameter_names::Vector{String} = map(i->"Param$i", 1:size(val, 2)),
         name_map = copy(DEFAULT_MAP);
         start::Int=1,
         thin::Int=1,
         evidence = missing,
-        info::NamedTuple=NamedTuple()
+        info::NamedTuple=NamedTuple(),
+        sorted::Bool=true
 ) where {A<:Union{Real, Union{Missing, Real}}}
     Chains(val[:,:,:], parameter_names, name_map, start=start,
-           thin=thin, evidence=evidence, info=info)
+           thin=thin, evidence=evidence, info=info, sorted=sorted)
 end
 
 # Generic chain constructor.
-function Chains(val::AbstractArray{A,3},
+function Chains(
+        val::AbstractArray{A,3},
         parameter_names::Vector{String} = map(i->"Param$i", 1:size(val, 2)),
         name_map = copy(DEFAULT_MAP);
         start::Int=1,
         thin::Int=1,
         evidence = missing,
-        info::NamedTuple=NamedTuple()) where {A<:Union{Real, Union{Missing, Real}}}
+        info::NamedTuple=NamedTuple(),
+        sorted::Bool=true) where {A<:Union{Real, Union{Missing, Real}}}
 
     # If we received an array of pairs, convert it to a dictionary.
     if typeof(name_map) <: Array
@@ -132,15 +129,21 @@ function Chains(val::AbstractArray{A,3},
     # Construct the AxisArray.
     axs = ntuple(i -> Axis{names[i]}(axvals[i]), 3)
     arr = AxisArray(val, axs...)
-    return sort(
-        Chains{A, typeof(evidence), typeof(name_map_tupl), typeof(info)}(
-            arr, evidence, name_map_tupl, info)
-    )
+
+    if sorted
+        return sort(
+            Chains{A, typeof(evidence), typeof(name_map_tupl), typeof(info)}(
+                arr, evidence, name_map_tupl, info)
+        )
+    else 
+        return Chains{A, typeof(evidence), typeof(name_map_tupl), typeof(info)}(
+                arr, evidence, name_map_tupl, info)
+    end
 end
 
 # Retrieve a new chain with only a specific section pulled out.
 function Chains(c::Chains{A, T, K, L}, section::Union{Vector, Any};
-                sorted=false) where {A, T, K, L}
+                sorted::Bool=false) where {A, T, K, L}
     section = typeof(section) <: AbstractArray ? section : [section]
 
     # If we received an empty list, return the original chain.
@@ -190,7 +193,7 @@ end
 
 
 #################### Indexing ####################
-function _sym2index(c::Chains, v::Union{Vector{Symbol}, Vector{String}}; sort = true)
+function _sym2index(c::Chains, v::Union{Vector{Symbol}, Vector{String}}; sorted::Bool = true)
     v_str = string.(v)
     idx = indexin(v_str, names(c))
     syms = []
@@ -203,7 +206,7 @@ function _sym2index(c::Chains, v::Union{Vector{Symbol}, Vector{String}}; sort = 
             push!(syms, value)
         end
     end
-    return sort ? sort!(syms, lt=MCMCChains.natural) : syms
+    return sorted ? sort!(syms, lt=MCMCChains.natural) : syms
 end
 
 Base.getindex(c::Chains, i1::T) where T<:Union{AbstractUnitRange, StepRange} = c[i1, :, :]
@@ -582,8 +585,16 @@ function sort(c::Chains{A, T, K, L}) where {A, T, K, L}
     for i in eachindex(sorted)
         new_v[:, i, :] = v[:, sorted[i][1], :]
     end
+
+    # Sort the name map too:
+    name_dict = Dict()
+    for (name, values) in pairs(c.name_map)
+        name_dict[name] = sort(values, by=x -> string(x), lt=MCMCChains.natural)
+    end
+    new_name_map = _dict2namedtuple(name_dict)
+
     aa = AxisArray(new_v, new_axes...)
-    return MCMCChains.Chains{A, T, K, L}(aa, c.logevidence, c.name_map, c.info)
+    return MCMCChains.Chains{A, T, K, L}(aa, c.logevidence, new_name_map, c.info)
 end
 
 """
@@ -642,7 +653,7 @@ function set_section(c::Chains{A, T, K, L}, d::Dict) where {A,T,K,L}
         c.value,
         c.logevidence,
         nt,
-        c.info
+        c.info,
     )
 end
 
@@ -740,4 +751,27 @@ function pool_chain(c::Chains{A, T, K, L}) where {A, T, K, L}
     val = c.value.data
     concat = vcat([val[:,:,j] for j in 1:size(val,3)]...)
     return Chains(cat(concat, dims=3), names(c), c.name_map; info=c.info)
+end
+
+function set_names(c::Chains{A, T, K, L}, d::Dict; sorted::Bool=true) where {A, T, K, L}
+    # Set new parameter names.
+    params = names(c)
+    new_params = replace(params, d...)
+
+    # Iterate through each pair in the name map to
+    # create a new one.
+    new_map = Dict()
+    for (section, parameters) in pairs(c.name_map)
+        new_map[section] = replace(parameters, d...)
+    end
+
+    # Return a new chains object.
+    return Chains(
+        c.value.data,
+        new_params,
+        new_map;
+        info=c.info,
+        evidence=c.logevidence,
+        sorted=sorted,
+    )
 end

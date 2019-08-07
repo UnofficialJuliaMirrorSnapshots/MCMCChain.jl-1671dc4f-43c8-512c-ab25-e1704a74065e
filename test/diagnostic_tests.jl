@@ -39,6 +39,8 @@ chn_disc = Chains(val_disc, start = 1, thin = 2)
     @test mean(chn, ["Param1", "Param2"]) isa MCMCChains.ChainDataFrame
     @test 1.05 >= mean(chn, :Param1) >= 0.95
     @test 1.05 >= mean(chn, "Param1") >= 0.95
+    @test names(set_names(chn, Dict("Param1" => "PARAM1"))) ==
+        ["PARAM1", "Param2", "Param3", "Param4"]
 end
 
 @testset "function tests" begin
@@ -52,6 +54,14 @@ end
     @test isa(gewekediag(chn[:,1,:]), Vector{MCMCChains.ChainDataFrame})
     @test isa(heideldiag(chn[:,1,:]), Vector{MCMCChains.ChainDataFrame})
     @test isa(rafterydiag(chn[:,1,:]), Vector{MCMCChains.ChainDataFrame})
+end
+
+@testset "sorting" begin
+    chn_sorted = Chains(rand(100,3,1), ["2", "1", "3"])
+    chn_unsorted = Chains(rand(100,3,1), ["2", "1", "3"], sorted=false)
+
+    @test names(chn_sorted) == ["1", "2", "3"]
+    @test names(chn_unsorted) == ["2", "1", "3"]
 end
 
 @testset "concatenation tests" begin
