@@ -6,60 +6,27 @@
 const DEFAULT_MAP = Dict{Symbol, Vector{Any}}(:parameters => [])
 
 # Constructor to handle a vector of vectors.
-function Chains(
-        val::Vector{Vector{A}},
-		parameter_names::Vector{String} = map(i->"Param$i", 1:length(first(val))),
-        name_map = copy(DEFAULT_MAP);
-        start::Int=1,
-        thin::Int=1,
-        evidence = missing,
-        info::NamedTuple=NamedTuple(),
-        sorted::Bool=true
-) where {A<:Union{Real, Union{Missing, Real}}}
-	return Chains(Array(hcat(val...)'), parameter_names, name_map, start=start,
-           thin=thin, evidence=evidence, info=info)
-end
+Chains(val::Vector{Vector{<:Union{Real, Union{Missing, Real}}}}, args...; kwargs...) =
+	Chains(copy(reduce(hcat, val)'), args...; kwargs...)
 
 # Constructor to handle a 1D array.
-function Chains(
-        val::AbstractArray{A,1},
-        parameter_names::Vector{String} = map(i->"Param$i", 1:size(val, 2)),
-        name_map = copy(DEFAULT_MAP);
-        start::Int=1,
-        thin::Int=1,
-        evidence = missing,
-        info::NamedTuple=NamedTuple(),
-        sorted::Bool=true
-) where {A<:Union{Real, Union{Missing, Real}}}
-	return Chains(val[:,:,:], parameter_names, name_map, start=start,
-           thin=thin, evidence=evidence, info=info, sorted=sorted)
-end
+Chains(val::AbstractVector{<:Union{Real, Union{Missing, Real}}}, args...; kwargs...) =
+	Chains(reshape(val, :, 1, 1), args...; kwargs...)
 
-# Set default parameter names if not given.
-function Chains(
-        val::AbstractArray{A,2},
-        parameter_names::Vector{String} = map(i->"Param$i", 1:size(val, 2)),
-        name_map = copy(DEFAULT_MAP);
-        start::Int=1,
-        thin::Int=1,
-        evidence = missing,
-        info::NamedTuple=NamedTuple(),
-        sorted::Bool=true
-) where {A<:Union{Real, Union{Missing, Real}}}
-    Chains(val[:,:,:], parameter_names, name_map, start=start,
-           thin=thin, evidence=evidence, info=info, sorted=sorted)
-end
+# Constructor to handle a 2D array
+Chains(val::AbstractMatrix{<:Union{Real, Union{Missing, Real}}}, args...; kwargs...) =
+	Chains(reshape(val, size(val, 1), size(val, 2), 1), args...; kwargs...)
 
 # Generic chain constructor.
 function Chains(
-        val::AbstractArray{A,3},
+        val::AbstractArray{<:Union{Real, Union{Missing, Real}},3},
         parameter_names::Vector{String} = map(i->"Param$i", 1:size(val, 2)),
         name_map_original = copy(DEFAULT_MAP);
         start::Int=1,
         thin::Int=1,
         evidence = missing,
         info::NamedTuple=NamedTuple(),
-        sorted::Bool=true) where {A<:Union{Real, Union{Missing, Real}}}
+        sorted::Bool=true)
     # If we received an array of pairs, convert it to a dictionary.
     name_map = if typeof(name_map_original) <: Dict
         # Copying can avoid state mutation.
@@ -134,62 +101,43 @@ function Chains(
 
     if sorted
         return sort(
-            Chains{A, typeof(evidence), typeof(name_map_tupl), typeof(info)}(
+            Chains{eltype(val), typeof(evidence), typeof(name_map_tupl), typeof(info)}(
                 arr, evidence, name_map_tupl, info)
         )
-    else 
-        return Chains{A, typeof(evidence), typeof(name_map_tupl), typeof(info)}(
+    else
+        return Chains{eltype(val), typeof(evidence), typeof(name_map_tupl), typeof(info)}(
                 arr, evidence, name_map_tupl, info)
     end
 end
 
 # Retrieve a new chain with only a specific section pulled out.
-function Chains(c::Chains{A, T, K, L}, section::Union{Vector, Any};
-                sorted::Bool=false) where {A, T, K, L}
-    section = typeof(section) <: AbstractArray ? section : [section]
+Chains(::Chains, ::Tuple{}; kwargs...) = throw(ArgumentError("no section specified"))
+Chains(c::Chains, section; kwargs...) = Chains(c, (section,); kwargs...)
+function Chains(c::Chains, section::AbstractArray; kwargs...)
+	Chains(c, ntuple(i -> section[i], length(section)); kwargs...)
+end
+function Chains(c::Chains, section::NTuple{<:Any,Symbol}; sorted::Bool=false)
+    # Make sure the section exists first.
+	section ⊆ keys(c.name_map) ||
+		throw(ArgumentError("$section is not a subset of the chain's name map"))
 
-    # If we received an empty list, return the original chain.
-    if isempty(section)
-        if sorted
-            return sort(c)
-        else
-            return c
-        end
-    end
-
-    # Gather the names from the relevant sections.
-    names = []
-    if isa(section, Vector)
-        for s in section
-            # Make sure the section exists first.
-            in(s, keys(c.name_map)) ||
-                throw(ArgumentError("$section not found in Chains name map."))
-
-            names = vcat(names, c.name_map[s])
-        end
-    else
-        in(s, keys(c.name_map)) ||
-            throw(ArgumentError("$section not found in Chains name map."))
-
-        names = c.name_map[s]
-    end
+	# Create the new section map.
+    name_map = NamedTuple{section}(getindex.(Ref(c.name_map), section))
 
     # Extract wanted values.
-    new_vals = c.value[:, names, :]
-
-    # Create the new section map.
-    new_section_map = _dict2namedtuple(Dict([s => c.name_map[s] for s in section]))
+    value = c.value[:, mapreduce(collect, vcat, name_map), :]
 
     # Create the new chain.
-    new_chn = Chains{A, T, typeof(new_section_map), L}(new_vals,
+    chain = Chains{eltype(c.value),typeof(c.logevidence),typeof(name_map),typeof(c.info)}(
+		value,
         c.logevidence,
-        new_section_map,
+        name_map,
         c.info)
 
     if sorted
-        return sort(new_chn)
+        return sort(chain)
     else
-        return new_chn
+        return chain
     end
 end
 
@@ -747,10 +695,10 @@ chainscat(c1::AbstractChains, args::AbstractChains...) = cat(c1, args..., dims=3
 Base.hcat(c1::AbstractChains, args::AbstractChains...) = cat(c1, args..., dims=2)
 Base.vcat(c1::AbstractChains, args::AbstractChains...) = cat(c1, args..., dims=1)
 
-function pool_chain(c::Chains{A, T, K, L}) where {A, T, K, L}
-    val = c.value.data
-    concat = vcat([val[:,:,j] for j in 1:size(val,3)]...)
-    return Chains(cat(concat, dims=3), names(c), c.name_map; info=c.info)
+function pool_chain(c::Chains)
+    data = c.value.data
+    pool_data = reshape(permutedims(data, [1, 3, 2]), :, size(data, 2), 1)
+    return Chains(pool_data, names(c), c.name_map; info=c.info)
 end
 
 function set_names(c::Chains{A, T, K, L}, d::Dict; sorted::Bool=true) where {A, T, K, L}
